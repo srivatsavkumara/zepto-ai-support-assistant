@@ -1,0 +1,183 @@
+============================================================
+STEP 1-2: SCRAPING
+============================================================
+scraping category: Mystery
+[warning] could not reach the internet (bad status code 403).
+[warning] using local fixture HTML instead so the pipeline still runs.
+  page 1 of Mystery: found 18 books
+scraping category: Fiction
+  page 1 of Fiction: found 18 books
+scraping category: Fantasy
+  page 1 of Fantasy: found 18 books
+scraping category: Science
+  page 1 of Science: found 18 books
+
+Total raw rows scraped: 72
+Categories scraped: 4 -> ['Mystery', 'Fiction', 'Fantasy', 'Science']
+                         title    price  ...             availability category
+0     Mystery: Shadow Garden 1   £47.08  ...   In stock (4 available)  Mystery
+1  Mystery: Whispers Machine 2   £11.59  ...  In stock (17 available)  Mystery
+2        Mystery: The Letter 3    £45.8  ...  In stock (15 available)  Mystery
+3     Mystery: Secret Garden 4   £47.94  ...  In stock (11 available)  Mystery
+4      Mystery: Secret River 5  £Â39.99  ...             Out of stock  Mystery
+
+[5 rows x 5 columns]
+
+============================================================
+STEP 3: CLEANING
+============================================================
+rows with unparseable price: 4
+imputed 4 missing price(s) with median = 34.89
+rows with unrecognised rating word: 4 -> dropping them
+
+final clean row count: 68
+title            str
+category         str
+price_gbp    float64
+price_inr    float64
+rating         int64
+in_stock        bool
+dtype: object
+                         title category  price_gbp  price_inr  rating  in_stock
+0     Mystery: Shadow Garden 1  Mystery      47.08    4966.94       2      True
+1  Mystery: Whispers Machine 2  Mystery      11.59    1222.74       1      True
+2        Mystery: The Letter 3  Mystery      45.80    4831.90       5      True
+3     Mystery: Secret Garden 4  Mystery      47.94    5057.67       2      True
+4      Mystery: Secret River 5  Mystery      39.99    4218.95       3     False
+
+============================================================
+STEP 4: LOADING INTO SQLITE (normalized, 2 tables, PK/FK)
+============================================================
+inserted 4 categories and 68 books into /home/claude/data_pipeline/books.db
+
+============================================================
+STEP 5: SQL QUERIES
+============================================================
+
+--- Q1_instock_high_rated ---
+SELECT title, rating, price_inr
+FROM books
+WHERE in_stock = 1 AND rating >= 4
+-> 23 rows
+                       title  rating  price_inr
+       Mystery: The Letter 3       5    4831.90
+ Mystery: Winter's Letter 15       4    4512.24
+  Mystery: Secret Machine 17       4    5790.90
+   Fiction: Broken Machine 1       4    4201.01
+Fiction: Secret Chronicles 3       4    1643.69
+  Fiction: Secret Prophecy 4       5    5074.55
+  Fiction: Whispers Voyage 8       5    5359.40
+   Fiction: Silent Voyage 14       4    2336.82
+   Fantasy: Shadow Kingdom 1       5    4495.35
+       Fantasy: Last Storm 2       4    3198.76
+
+--- Q2_top10_expensive ---
+SELECT title, price_inr
+FROM books
+ORDER BY price_inr DESC
+LIMIT 10
+-> 10 rows
+                     title  price_inr
+  Mystery: Crimson House 7    6188.63
+     Fiction: Quiet Star 2    6177.02
+ Fantasy: Broken Kingdom 7    6123.22
+Mystery: Secret Machine 17    5790.90
+Fiction: Whispers Voyage 8    5359.40
+Fiction: Secret Prophecy 4    5074.55
+  Mystery: Secret Garden 4    5057.67
+  Mystery: Shadow Garden 1    4966.94
+   Science: Secret Storm 1    4964.83
+     Mystery: The Letter 3    4831.90
+
+--- Q3_distinct_ratings ---
+SELECT DISTINCT rating
+FROM books
+ORDER BY rating
+-> 5 rows
+ rating
+      1
+      2
+      3
+      4
+      5
+
+--- Q4_between_and_in ---
+SELECT b.title, b.price_inr, c.category_name
+FROM books b
+JOIN categories c ON b.category_id = c.category_id
+WHERE b.price_inr BETWEEN 2000 AND 4000
+  AND c.category_name IN ('Mystery', 'Fantasy')
+-> 13 rows
+                      title  price_inr category_name
+      Fantasy: Last Storm 2    3198.76       Fantasy
+         Fantasy: A Storm 3    3054.22       Fantasy
+   Fantasy: Whispers City 8    3185.04       Fantasy
+    Fantasy: Silent Door 11    3466.73       Fantasy
+ Fantasy: Shadow Journey 12    3890.84       Fantasy
+  Fantasy: Whispers City 13    3681.42       Fantasy
+   Fantasy: Shadow River 15    2449.71       Fantasy
+Fantasy: Secret Prophecy 17    3632.36       Fantasy
+      Mystery: Lost House 6    2948.72       Mystery
+     Mystery: Last Storm 12    3493.10       Mystery
+
+--- Q5_top_rated_per_category_JOIN ---
+SELECT c.category_name, b.title, b.rating, b.price_inr
+FROM books b
+JOIN categories c ON b.category_id = c.category_id
+WHERE b.rating = (
+    SELECT MAX(b2.rating) FROM books b2 WHERE b2.category_id = b.category_id
+)
+ORDER BY c.category_name, b.price_inr DESC
+-> 12 rows
+category_name                         title  rating  price_inr
+      Fantasy   Fantasy: Midnight Machine 4       5    4729.56
+      Fantasy     Fantasy: Shadow Kingdom 1       5    4495.35
+      Fantasy    Fantasy: Shadow Journey 12       5    3890.84
+      Fantasy      Fantasy: Whispers City 8       5    3185.04
+      Fantasy       Fantasy: A Chronicles 6       5    1356.73
+      Fantasy Fantasy: Midnight Prophecy 14       5    1096.14
+      Fiction    Fiction: Whispers Voyage 8       5    5359.40
+      Fiction    Fiction: Secret Prophecy 4       5    5074.55
+      Mystery         Mystery: The Letter 3       5    4831.90
+      Science       Science: Secret Storm 1       5    4964.83
+
+============================================================
+STEP 6: pandas read_sql vs pandas merge (for the JOIN query)
+============================================================
+
+pd.read_sql(Q1) shape: (23, 3)
+pd.read_sql(Q5 - the JOIN query) shape: (12, 4)
+
+SQL JOIN result (via pd.read_sql):
+category_name                         title  rating  price_inr
+      Fantasy   Fantasy: Midnight Machine 4       5    4729.56
+      Fantasy     Fantasy: Shadow Kingdom 1       5    4495.35
+      Fantasy    Fantasy: Shadow Journey 12       5    3890.84
+      Fantasy      Fantasy: Whispers City 8       5    3185.04
+      Fantasy       Fantasy: A Chronicles 6       5    1356.73
+      Fantasy Fantasy: Midnight Prophecy 14       5    1096.14
+      Fiction    Fiction: Whispers Voyage 8       5    5359.40
+      Fiction    Fiction: Secret Prophecy 4       5    5074.55
+      Mystery         Mystery: The Letter 3       5    4831.90
+      Science       Science: Secret Storm 1       5    4964.83
+      Science     Science: Golden Garden 14       5    3798.00
+      Science   Science: Golden Prophecy 13       5    3681.42
+
+pandas merge result (no SQL):
+category_name                         title  rating  price_inr
+      Fantasy   Fantasy: Midnight Machine 4       5    4729.56
+      Fantasy     Fantasy: Shadow Kingdom 1       5    4495.35
+      Fantasy    Fantasy: Shadow Journey 12       5    3890.84
+      Fantasy      Fantasy: Whispers City 8       5    3185.04
+      Fantasy       Fantasy: A Chronicles 6       5    1356.73
+      Fantasy Fantasy: Midnight Prophecy 14       5    1096.14
+      Fiction    Fiction: Whispers Voyage 8       5    5359.40
+      Fiction    Fiction: Secret Prophecy 4       5    5074.55
+      Mystery         Mystery: The Letter 3       5    4831.90
+      Science       Science: Secret Storm 1       5    4964.83
+      Science     Science: Golden Garden 14       5    3798.00
+      Science   Science: Golden Prophecy 13       5    3681.42
+
+SQL result and pandas-merge result match exactly: True
+
+DONE. Database saved at: /home/claude/data_pipeline/books.db
